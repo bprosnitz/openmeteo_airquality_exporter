@@ -17,7 +17,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
-var url = `https://air-quality-api.open-meteo.com/v1/air-quality?latitude=%f&longitude=%f&current=european_aqi,us_aqi,pm10,pm2_5,carbon_monoxide,nitrogen_dioxide,sulphur_dioxide,ozone,aerosol_optical_depth,dust,ammonia,alder_pollen,birch_pollen,grass_pollen,mugwort_pollen,olive_pollen,ragweed_pollen&timezone=America%%2FLos_Angeles`
+var url = `https://air-quality-api.open-meteo.com/v1/air-quality?latitude=%f&longitude=%f&current=european_aqi,us_aqi,pm10,pm2_5,carbon_monoxide,nitrogen_dioxide,sulphur_dioxide,ozone,aerosol_optical_depth,dust,ammonia,alder_pollen,birch_pollen,grass_pollen,mugwort_pollen,olive_pollen,ragweed_pollen,uv_index,uv_index_clear_sky&timezone=America%%2FLos_Angeles`
 
 func main() {
 	var pollInterval time.Duration
@@ -27,7 +27,7 @@ func main() {
 	flag.DurationVar(&pollInterval, "poll-interval", time.Minute, "poll frequency")
 	flag.Float64Var(&latitude, "latitude", 0, "latitude")
 	flag.Float64Var(&longitude, "longitude", 0, "longitude")
-	flag.StringVar(&addr, "addr", "0.0.0.0:9771", "server addr")
+	flag.StringVar(&addr, "addr", "0.0.0.0:9776", "server addr")
 	flag.Parse()
 
 	if latitude == 0 && longitude == 0 {
@@ -39,6 +39,15 @@ func main() {
 
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+	
+	go func() {
+		select {
+		case <-ctx.Done():
+			return;
+		case <-sigChan:
+			return;
+		}
+	}()
 
 	go collect(ctx, pollInterval, latitude, longitude)
 
@@ -89,6 +98,11 @@ func collect(ctx context.Context, pollInterval time.Duration, latitude, longitud
 		metrics.current.mugwortPollen.Set(response.Current.MugwortPollen)
 		metrics.current.olivePollen.Set(response.Current.OlivePollen)
 		metrics.current.ragweedPollen.Set(response.Current.RagweedPollen)
+		// uvIndex is the condition-aware UV index (attenuated by clouds and
+		// aerosols); uvIndexClearSky is the theoretical clear-sky maximum. The
+		// ratio of the two reflects how much current conditions reduce UV.
+		metrics.current.uvIndex.Set(response.Current.UVIndex)
+		metrics.current.uvIndexClearSky.Set(response.Current.UVIndexClearSky)
 
 		select {
 		case <-ctx.Done():
@@ -120,6 +134,8 @@ type response struct {
 		MugwortPollen       float64 `json:"mugwort_pollen"`
 		OlivePollen         float64 `json:"olive_pollen"`
 		RagweedPollen       float64 `json:"ragweed_pollen"`
+		UVIndex             float64 `json:"uv_index"`
+		UVIndexClearSky     float64 `json:"uv_index_clear_sky"`
 	} `json:"current"`
 }
 
@@ -142,6 +158,8 @@ type currentMetrics struct {
 	mugwortPollen       prometheus.Gauge
 	olivePollen         prometheus.Gauge
 	ragweedPollen       prometheus.Gauge
+	uvIndex             prometheus.Gauge
+	uvIndexClearSky     prometheus.Gauge
 }
 
 var metrics = struct {
@@ -225,6 +243,14 @@ var metrics = struct {
 			Namespace: "openmeteo_airquality",
 			Name:      "current_ragweed_pollen",
 		}),
+		uvIndex: prometheus.NewGauge(prometheus.GaugeOpts{
+			Namespace: "openmeteo_airquality",
+			Name:      "current_uv_index",
+		}),
+		uvIndexClearSky: prometheus.NewGauge(prometheus.GaugeOpts{
+			Namespace: "openmeteo_airquality",
+			Name:      "current_uv_index_clear_sky",
+		}),
 	},
 }
 
@@ -248,4 +274,6 @@ func init() {
 	prometheus.Register(metrics.current.mugwortPollen)
 	prometheus.Register(metrics.current.olivePollen)
 	prometheus.Register(metrics.current.ragweedPollen)
+	prometheus.Register(metrics.current.uvIndex)
+	prometheus.Register(metrics.current.uvIndexClearSky)
 }
