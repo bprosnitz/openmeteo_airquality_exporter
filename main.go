@@ -51,6 +51,13 @@ func main() {
 
 	go collect(ctx, pollInterval, latitude, longitude)
 
+	// Push metrics to TimescaleDB via OTLP in addition to /metrics.
+	if stop, err := startOTLPPush(prometheus.DefaultGatherer); err != nil {
+		log.Printf("OTLP push disabled: %v", err)
+	} else {
+		defer stop()
+	}
+
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", promhttp.Handler())
 	server := http.Server{
